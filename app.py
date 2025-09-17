@@ -679,19 +679,23 @@ def logout():
 
 def fetch_historical_data():
     """Fetch last 7 days of BTC/USD daily prices with multiple fallbacks."""
-    # 1) Binance daily candles
+
+    # 1) Yahoo Finance
     try:
-        url = "https://api.binance.com/api/v3/klines"
-        params = {"symbol": "BTCUSDT", "interval": "1d", "limit": 7}
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD"
+        params = {"interval": "1d", "range": "7d"}
         r = requests.get(url, params=params, timeout=10)
         r.raise_for_status()
         data = r.json()
-        if data:
-            return [[int(item[0]), float(item[4])] for item in data]
+        timestamps = data["chart"]["result"][0]["timestamp"]
+        closes = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+        prices = [[ts * 1000, float(c)] for ts, c in zip(timestamps, closes) if c is not None]
+        if prices:
+            return prices
     except Exception as e:
-        print(f"Historical Binance failed: {e}")
+        print(f"Historical Yahoo Finance failed: {e}")
 
-    # 2) CoinGecko fallback (may rate-limit)
+    # 2) CoinGecko fallback
     try:
         url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
         params = {"vs_currency": "usd", "days": "7", "interval": "daily"}
