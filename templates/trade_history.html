@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Trade History - Trading Bot{% endblock %}
+
+{% block extra_css %}
+<style>
+    .trade-item {
+        padding: 10px;
+        border-bottom: 1px solid #e9ecef;
+    }
+    .trade-item:last-child {
+        border-bottom: none;
+    }
+    .trade-type {
+        font-weight: bold;
+        padding: 5px 10px;
+        border-radius: 5px;
+    }
+    .trade-BUY {
+        background-color: #28a745;
+        color: white;
+    }
+    .trade-SELL {
+        background-color: #dc3545;
+        color: white;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 class="text-center mb-4">Trade History</h2>
+
+<ul class="list-group">
+    {% for trade in trades %}
+    <li class="list-group-item trade-item d-flex justify-content-between align-items-center">
+        <div>
+            <span class="trade-type trade-{{ trade.type }}">{{ trade.type.upper() }}</span>
+            {{ "%.8f"|format(trade.amount) }} BTC @ ${{ "%.2f"|format(trade.price) }}
+        </div>
+        <div>
+            <span class="{% if trade.profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                ${{ "%.2f"|format(trade.profit) }}
+            </span>
+            <small class="text-muted d-block">{{ trade.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</small>
+        </div>
+    </li>
+    {% endfor %}
+</ul>
+{% endblock %} 

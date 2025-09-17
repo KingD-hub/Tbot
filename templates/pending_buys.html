@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}Pending Buy Orders - Trading Bot{% endblock %}
+
+{% block extra_css %}
+<style>
+    .price-up {
+        color: #28a745;
+    }
+    .price-down {
+        color: #dc3545;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Pending Buy Orders</h2>
+    
+    <div class="alert alert-info mb-4">
+        <i class="fas fa-info-circle"></i>
+        When you confirm a buy order, it will execute at the current market price, not the price shown when the alert was created.
+        If the price has changed significantly (>1%), you'll be asked to confirm again.
+    </div>
+    
+    {% if pending %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Amount (BTC)</th>
+                        <th>Alert Price (USDT)</th>
+                        <th>Total Cost at Alert</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for buy in pending %}
+                    <tr>
+                        <td>{{ buy.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                        <td>{{ "%.8f"|format(buy.amount) }}</td>
+                        <td>${{ "%.2f"|format(buy.price) }}</td>
+                        <td>${{ "%.2f"|format(buy.amount * buy.price) }}</td>
+                        <td>
+                            <div class="btn-group">
+                                <a href="{{ url_for('confirm_buy', buy_id=buy.id) }}" class="btn btn-success btn-sm">Confirm at Market Price</a>
+                                <a href="{{ url_for('reject_buy', buy_id=buy.id) }}" class="btn btn-danger btn-sm">Reject</a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="alert alert-info">No pending buy orders.</div>
+    {% endif %}
+    
+    <a href="{{ url_for('dashboard') }}" class="btn btn-primary">Back to Dashboard</a>
+</div>
+{% endblock %} 

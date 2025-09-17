@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - Trading Bot{% endblock %}
+
+{% block extra_css %}
+<style>
+    .settings-group {
+        margin-bottom: 2rem;
+        padding: 1rem;
+        border-radius: 8px;
+        background-color: #f8f9fa;
+    }
+    .form-group {
+        margin-bottom: 15px;
+    }
+    .help-text {
+        font-size: 0.9em;
+        color: #6c757d;
+    }
+    .btn {
+        width: 100%;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 class="text-center mb-4">Bot Settings</h2>
+
+<form method="POST" action="{{ url_for('settings') }}">
+    <div class="settings-group">
+        <h3>Trading Mode</h3>
+        <div class="form-group form-check">
+            <input type="checkbox" id="demo_mode" name="demo_mode" class="form-check-input" 
+                   {% if user.settings.demo_mode %}checked{% endif %}>
+            <label class="form-check-label" for="demo_mode">Demo Mode</label>
+            <small class="help-text d-block">Trade with virtual funds to test your strategy without risk</small>
+        </div>
+        {% if user.settings.demo_mode %}
+        <div class="demo-balances">
+            <p>Demo BTC Balance: {{ "%.8f"|format(user.settings.demo_btc_balance) }} BTC</p>
+            <p>Demo USDT Balance: ${{ "%.2f"|format(user.settings.demo_usdt_balance) }}</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="settings-group">
+        <h3>Bot Status</h3>
+        <div class="form-group form-check">
+            <input type="checkbox" id="is_trading" name="is_trading" class="form-check-input" 
+                   {% if user.settings.is_trading %}checked{% endif %}>
+            <label class="form-check-label" for="is_trading">Activate Trading Bot</label>
+        </div>
+    </div>
+
+    <div class="settings-group">
+        <h3>Trading Parameters</h3>
+        <div class="form-group">
+            <label for="buy_threshold">Buy Threshold ($):</label>
+            <input type="text" id="buy_threshold" name="buy_threshold" class="form-control" 
+                   value="{{ user.settings.buy_threshold }}" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="sell_threshold">Sell Threshold ($):</label>
+            <input type="text" id="sell_threshold" name="sell_threshold" class="form-control" 
+                   value="{{ user.settings.sell_threshold }}" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="trade_amount">Trade Amount (BTC):</label>
+            <input type="text" id="trade_amount" name="trade_amount" class="form-control" 
+                   value="{{ user.settings.trade_amount }}" required oninput="updateUSDValue()">
+        </div>
+        <div class="form-group">
+            <label for="btc_to_usd">Equivalent Price in USD:</label>
+            <p id="btc_to_usd" class="fs-5 fw-bold text-primary">Loading...</p>
+        </div>
+    </div>
+
+    <div id="api_settings" class="settings-group" {% if user.settings.demo_mode %}style="display: none;"{% endif %}>
+        <h3>API Configuration</h3>
+        <div class="form-group">
+            <label for="api_key">API Key:</label>
+            <input type="text" id="api_key" name="api_key" class="form-control" value="{{ user.api_key or '' }}" 
+                   {% if not user.settings.demo_mode %}required{% endif %}>
+        </div>
+        
+        <div class="form-group">
+            <label for="api_secret">API Secret:</label>
+            <input type="password" id="api_secret" name="api_secret" class="form-control" value="{{ user.api_secret or '' }}" 
+                   {% if not user.settings.demo_mode %}required{% endif %}>
+        </div>
+        <small class="help-text">Your API key must have trading permissions enabled</small>
+    </div>
+
+    <div class="settings-group">
+        <h3>Risk Management</h3>
+        <div class="form-group">
+            <label for="sell_all_percentage">Stop Loss Percentage (%):</label>
+            <input type="text" id="sell_all_percentage" name="sell_all_percentage" class="form-control" 
+                   value="{{ user.settings.sell_all_percentage }}" required>
+            <small class="help-text">Enter the percentage drop from the last buy price to trigger a sell of all BTC.</small>
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Save Settings</button>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Function to toggle API settings visibility based on demo mode
+    function toggleApiSettings() {
+        const demoMode = document.getElementById('demo_mode').checked;
+        const apiSettings = document.getElementById('api_settings');
+        const apiKey = document.getElementById('api_key');
+        const apiSecret = document.getElementById('api_secret');
+        
+        if (demoMode) {
+            apiSettings.style.display = 'none';
+            apiKey.removeAttribute('required');
+            apiSecret.removeAttribute('required');
+        } else {
+            apiSettings.style.display = 'block';
+            apiKey.setAttribute('required', '');
+            apiSecret.setAttribute('required', '');
+        }
+    }
+
+    // Add event listener to demo mode checkbox
+    document.getElementById('demo_mode').addEventListener('change', toggleApiSettings);
+
+    // Function to update the equivalent USD value
+    async function updateUSDValue() {
+        const btcAmount = document.getElementById('trade_amount').value;
+        const btcToUsd = await fetchBTCPrice();
+        const equivalentUSD = (btcAmount * btcToUsd).toFixed(2);
+        document.getElementById('btc_to_usd').innerText = `$${equivalentUSD} USD`;
+    }
+
+    // Function to fetch the current BTC price
+    async function fetchBTCPrice() {
+        try {
+            const response = await fetch('/get_btc_price');
+            const data = await response.json();
+            return data.price;
+        } catch (error) {
+            console.error('Error fetching BTC price:', error);
+            return 0;
+        }
+    }
+
+    // Initial setup
+    window.onload = function() {
+        toggleApiSettings();
+        updateUSDValue();
+    };
+</script>
+{% endblock %} 

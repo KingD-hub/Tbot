@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Trading Bot{% endblock %}
+
+{% block extra_css %}
+<style>
+    .card {
+        background-color: rgba(255, 255, 255, 0.9);
+        border: none;
+        color: #333;
+        margin-bottom: 20px;
+    }
+    .card:hover {
+        transform: scale(1.05);
+        transition: all 0.3s ease-in-out;
+    }
+    .trade-type {
+        font-weight: bold;
+        padding: 5px 10px;
+        border-radius: 5px;
+    }
+    .trade-BUY {
+        background-color: #28a745;
+        color: white;
+    }
+    .trade-SELL {
+        background-color: #dc3545;
+        color: white;
+    }
+    .btc-logo {
+        width: 60px;
+        height: 60px;
+        aspect-ratio: 1 / 1;
+        object-fit: contain;
+        vertical-align: middle;
+    }
+    .btc-price-title {
+        font-weight: bold;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Stat Cards -->
+<div class="row">
+    <div class="col-md-12">
+        <div class="card shadow-sm text-center p-4">
+            <div class="d-flex align-items-center justify-content-center flex-column">
+                <img src="https://assets.coincap.io/assets/icons/btc@2x.png" alt="Bitcoin Logo" class="btc-logo mb-2">
+                <h2 class="mb-0 btc-price-title">Current BTC Price</h2>
+            </div>
+            <p class="display-3 fw-bold text-primary mt-3 mb-2" id="btc-price">Loading...</p>
+            <small class="text-muted">Live price updates every minute</small>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <div class="card shadow-sm p-3">
+            <h4>Total Profit/Loss</h4>
+            <p class="fs-3 fw-bold {% if total_profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                ${{ "%.2f"|format(total_profit) }}
+            </p>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <div class="card shadow-sm p-3">
+            <h4>24h Profit/Loss</h4>
+            <p class="fs-3 fw-bold {% if profit_24h >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                ${{ "%.2f"|format(profit_24h) }}
+            </p>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <div class="card shadow-sm p-3">
+            <h4>7-Day Profit/Loss</h4>
+            <p class="fs-3 fw-bold {% if profit_7d >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                ${{ "%.2f"|format(profit_7d) }}
+            </p>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <div class="card shadow-sm p-3">
+            <h4>Win Rate</h4>
+            <p class="fs-3 fw-bold">{{ "%.1f"|format(win_rate) }}%</p>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <div class="card shadow-sm p-3">
+            <h4>Total Trades</h4>
+            <p class="fs-3 fw-bold">{{ total_trades }}</p>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <div class="card shadow-sm p-3">
+            <h4>Current Balance</h4>
+            <p class="fs-3 fw-bold">
+                {% if user.settings.demo_mode %}
+                    {{ "%.8f"|format(user.settings.demo_btc_balance) }} BTC
+                    <br>
+                    ${{ "%.2f"|format(user.settings.demo_usdt_balance) }} USDT
+                {% else %}
+                    Loading...
+                {% endif %}
+            </p>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <div class="card shadow-sm p-3">
+            <h4>User-Defined Thresholds</h4>
+            <p class="fs-5">Buy: ${{ "%.2f"|format(user.settings.buy_threshold) }}</p>
+            <p class="fs-5">Sell: ${{ "%.2f"|format(user.settings.sell_threshold) }}</p>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <div class="card shadow-sm p-3">
+            <h4>Minimum Trade Amount</h4>
+            <p class="fs-5">The minimum trade amount for BTC/USDT is **0.001 BTC**.</p>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <div class="card shadow-sm p-3 text-center">
+            <h4>Moving Average (7 Days)</h4>
+            <p class="fs-3 fw-bold text-primary">{{ moving_average | round(2) }} USD</p>
+            <h4>Percentage Change</h4>
+            <p class="fs-3 fw-bold {% if percentage_change >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                {{ percentage_change | round(2) }}%
+            </p>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <div class="card shadow-sm p-3">
+            <h4>Guide to Moving Average</h4>
+            <p>The moving average is a commonly used indicator in trading that helps smooth out price data by creating a constantly updated average price. A rising moving average indicates a bullish trend, while a falling moving average indicates a bearish trend.</p>
+            <p>Percentage change shows how much the current price has deviated from the moving average. A positive percentage indicates that the current price is above the moving average, suggesting upward momentum.</p>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <div class="card shadow-sm p-3 text-center">
+            <h4>Average Low Price (7 Days)</h4>
+            <p class="fs-3 fw-bold text-primary">{{ average_low | round(2) }} USD</p>
+            <h4>Average High Price (7 Days)</h4>
+            <p class="fs-3 fw-bold text-primary">{{ average_high | round(2) }} USD</p>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Trades -->
+<div class="mt-4">
+    <h2 class="mb-3">Recent Trades</h2>
+    <ul class="list-group">
+        {% for trade in recent_trades %}
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+            <div>
+                <span class="trade-type trade-{{ trade.type }}">{{ trade.type.upper() }}</span>
+                {{ "%.8f"|format(trade.amount) }} BTC @ ${{ "%.2f"|format(trade.price) }}
+            </div>
+            <div>
+                <span class="{% if trade.profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                    ${{ "%.2f"|format(trade.profit) }}
+                </span>
+                <small class="text-muted d-block">{{ trade.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</small>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    async function fetchBTCPrice() {
+        try {
+            const response = await fetch('/get_btc_price');
+            if (!response.ok) throw new Error('Network error');
+            
+            const data = await response.json();
+            document.getElementById('btc-price').innerText = `$${data.price.toFixed(2)}`;
+        } catch (error) {
+            console.error('Error fetching BTC price:', error);
+            document.getElementById('btc-price').innerText = 'Error';
+        }
+    }
+
+    window.onload = fetchBTCPrice;
+    setInterval(fetchBTCPrice, 60000);
+</script>
+{% endblock %}
