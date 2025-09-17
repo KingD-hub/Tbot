@@ -232,7 +232,7 @@ def check_and_execute_trades():
             print("\n=== Starting Trade Check ===")
             try:
                 users = User.query.all()
-                current_price = fetch_binance_price('BTCUSDT')
+                current_price = fetch_price_with_fallback()
                 print(f"Current BTC price: ${current_price:.2f}")
                 
                 for user in users:
@@ -555,12 +555,7 @@ def dashboard():
     
     # Calculate price statistics (safe against API failures)
     historical_prices = fetch_historical_data()
-    try:
-        resp = requests.get('https://api.binance.com/api/v3/ticker/price', params={'symbol': 'BTCUSDT'}, timeout=10)
-        current_price = float(resp.json().get('price'))
-    except Exception as e:
-        print(f"Error fetching current BTC price: {e}")
-        current_price = 0.0
+    current_price = fetch_price_with_fallback()
     moving_average = calculate_moving_average(historical_prices) if historical_prices else 0
     percentage_change = calculate_percentage_change(current_price, moving_average) if moving_average else 0
     average_low = calculate_average_low(historical_prices) if historical_prices else 0
@@ -702,8 +697,8 @@ def check_buy_sell_conditions(current_price, buy_threshold, sell_threshold):
     print(f"Buy Threshold: {buy_threshold}, Sell Threshold: {sell_threshold}, Current Price: {current_price}")
 
 def fetch_current_btc_price():
-    # Fetch the current BTC price from Binance safely
-    return fetch_binance_price('BTCUSDT')
+    # Fetch the current BTC price with fallbacks
+    return fetch_price_with_fallback()
 
 def trading_bot(user_settings):
     while True:
