@@ -472,6 +472,13 @@ def dashboard():
     if not user:
         session.clear()
         return redirect(url_for('login'))
+    # Ensure settings exist for this user (prevents template errors)
+    if not user.settings:
+        default_settings = Settings(user_id=user.id)
+        db.session.add(default_settings)
+        db.session.commit()
+        # Refresh relationship
+        user = User.query.get(user.id)
     
     # Get pending buy count
     pending_count = PendingBuy.query.filter_by(
