@@ -572,6 +572,16 @@ def dashboard():
     
     # Calculate price statistics (safe against API failures)
     historical_prices = fetch_historical_data()
+    # Local fallback if external failed
+    if not historical_prices:
+        try:
+            stored = json.loads(user.settings.price_history or '[]')
+            if isinstance(stored, list) and stored:
+                last = stored[-7:]
+                historical_prices = [[i, float(v)] for i, v in enumerate(last, start=1) if isinstance(v, (int, float))]
+        except Exception:
+            pass
+
     current_price = fetch_price_with_fallback()
     moving_average = calculate_moving_average(historical_prices) if historical_prices else 0
     percentage_change = calculate_percentage_change(current_price, moving_average) if moving_average else 0
@@ -732,13 +742,16 @@ def fetch_historical_data():
     return []
 
 def calculate_moving_average(prices, days=7):
-    if len(prices) < days:
-        return None  # Not enough data
-    moving_averages = []
-    for i in range(len(prices) - days + 1):
-        avg = sum(price[1] for price in prices[i:i + days]) / days
-        moving_averages.append(avg)
-    return moving_averages[-1]  # Return the latest moving average
+    """Return latest moving average using up to the last `days` points.
+
+    Accepts [[ts, price], ...]. If fewer than `days` points are available, it
+    averages whatever is available. Returns 0 if the list is empty.
+    """
+    if not prices:
+        return 0
+    window = min(len(prices), days)
+    tail = prices[-window:]
+    return sum(p[1] for p in tail) / window
 
 def calculate_percentage_change(current_price, moving_average):
     if moving_average is None:
