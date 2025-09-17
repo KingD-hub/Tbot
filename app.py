@@ -503,14 +503,18 @@ def dashboard():
     # Get recent trades
     recent_trades = trades[:10]  # Last 10 trades
     
-    # Calculate price statistics
+    # Calculate price statistics (safe against API failures)
     historical_prices = fetch_historical_data()
-    current_price = float(requests.get('https://api.binance.com/api/v3/ticker/price', 
-                                     params={'symbol': 'BTCUSDT'}).json()['price'])
-    moving_average = calculate_moving_average(historical_prices)
+    try:
+        resp = requests.get('https://api.binance.com/api/v3/ticker/price', params={'symbol': 'BTCUSDT'}, timeout=10)
+        current_price = float(resp.json().get('price'))
+    except Exception as e:
+        print(f"Error fetching current BTC price: {e}")
+        current_price = 0.0
+    moving_average = calculate_moving_average(historical_prices) if historical_prices else 0
     percentage_change = calculate_percentage_change(current_price, moving_average) if moving_average else 0
-    average_low = calculate_average_low(historical_prices)
-    average_high = calculate_average_high(historical_prices)
+    average_low = calculate_average_low(historical_prices) if historical_prices else 0
+    average_high = calculate_average_high(historical_prices) if historical_prices else 0
     
     return render_template('dashboard.html',
                          user=user,
@@ -607,9 +611,14 @@ def fetch_historical_data():
         'days': '7',  # Fetch data for the last 7 days
         'interval': 'daily'
     }
-    response = requests.get(url, params=params)
-    data = response.json()
-    return data['prices']  # Returns a list of prices
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return data.get('prices', [])
+    except Exception as e:
+        print(f"Error fetching historical data: {e}")
+        return []
 
 def calculate_moving_average(prices, days=7):
     if len(prices) < days:
