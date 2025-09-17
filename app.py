@@ -243,14 +243,17 @@ def calculate_trade_profit(buy_price, sell_price, amount):
     return (sell_price - buy_price) * amount
 
 def backfill_price_history(user, days=7):
-    """Backfill settings.price_history using recent trades or current price."""
+    """Backfill settings.price_history using recent trades or current price.
+
+    Returns True if the settings were updated, otherwise False.
+    """
     try:
         history = json.loads(user.settings.price_history or "[]")
     except Exception:
         history = []
 
     if len(history) >= days:
-        return
+        return False
 
     trades = (
         TradeHistory.query
@@ -270,8 +273,8 @@ def backfill_price_history(user, days=7):
             history = [current_price] * days
 
     user.settings.price_history = json.dumps(history)
-    db.session.commit()
     print(f"✓ Backfilled {len(history)} prices for {user.email}")
+    return True
 
 def check_and_execute_trades():
     print("\nStarting continuous trade check loop...")
@@ -604,11 +607,14 @@ def dashboard():
     recent_trades = trades[:10]  # Last 10 trades
     
     # Backfill price history if empty for immediate stats
+    updated = False
     if not user.settings.price_history or user.settings.price_history == "[]":
-        backfill_price_history(user, days=7)
+        updated = backfill_price_history(user, days=7)
+        if updated:
+            db.session.commit()
 
     # Calculate price statistics (safe against API failures)
-    historical_prices = fetch_historical_data()
+    historical_prices = fetch_historical_data(user)
     # Local fallback if external failed
     if not historical_prices:
         try:
@@ -712,7 +718,7 @@ def logout():
     session.pop('user_id', None)
     return redirect(url_for('login'))
 
-def fetch_historical_data():
+def fetch_historical_data(user=None):
     """Fetch last 7 days of BTC/USD daily prices with multiple fallbacks."""
 
     # 1) Yahoo Finance
@@ -745,8 +751,11 @@ def fetch_historical_data():
 
     # 3) Local settings.price_history fallback
     try:
-        if hasattr(g, "user") and g.user and g.user.settings and g.user.settings.price_history:
-            local_prices = json.loads(g.user.settings.price_history)
+        source_user = user
+        if source_user is None and hasattr(g, "user"):
+            source_user = g.user
+        if source_user and getattr(source_user, 'settings', None) and source_user.settings.price_history:
+            local_prices = json.loads(source_user.settings.price_history)
             if local_prices:
                 return [[int(time.time() * 1000), float(p)] for p in local_prices[-7:]]
     except Exception as e:
