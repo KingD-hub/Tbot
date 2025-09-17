@@ -95,6 +95,34 @@ def fetch_binance_price(symbol: str = 'BTCUSDT') -> float:
         print(f"Error fetching Binance price for {symbol}: {error}")
         return 0.0
 
+def fetch_price_with_fallback() -> float:
+    """Try multiple public APIs to get BTC/USD price. Returns 0.0 if all fail."""
+    # 1) Binance
+    price = fetch_binance_price('BTCUSDT')
+    if price and price > 0:
+        return price
+    # 2) CoinCap
+    try:
+        r = requests.get('https://api.coincap.io/v2/assets/bitcoin', timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        usd = data.get('data', {}).get('priceUsd')
+        if usd is not None:
+            return float(usd)
+    except Exception as e:
+        print(f"CoinCap fallback failed: {e}")
+    # 3) CoinGecko simple price
+    try:
+        r = requests.get('https://api.coingecko.com/api/v3/simple/price', params={'ids': 'bitcoin', 'vs_currencies': 'usd'}, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        usd = data.get('bitcoin', {}).get('usd')
+        if usd is not None:
+            return float(usd)
+    except Exception as e:
+        print(f"CoinGecko fallback failed: {e}")
+    return 0.0
+
 def get_binance_signature(data, secret):
     return hmac.new(secret.encode('utf-8'), data.encode('utf-8'), hashlib.sha256).hexdigest()
 
@@ -614,12 +642,11 @@ def get_balances():
 
 @app.route('/get_btc_price')
 def get_btc_price():
-    try:
-        response = requests.get('https://api.binance.com/api/v3/ticker/price', params={'symbol': 'BTCUSDT'})
-        data = response.json()
-        return jsonify({'price': float(data['price'])})
-    except:
-        return jsonify({'error': 'Unable to fetch price'}), 500
+    price = fetch_price_with_fallback()
+    if price and price > 0:
+        return jsonify({'price': float(price)})
+    # Still return 200 with a sentinel; client can show "N/A"
+    return jsonify({'price': 0.0, 'warning': 'All providers unavailable'}), 200
 
 @app.route('/logout')
 def logout():
