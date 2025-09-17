@@ -666,20 +666,70 @@ def logout():
     return redirect(url_for('login'))
 
 def fetch_historical_data():
-    url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
-    params = {
-        'vs_currency': 'usd',
-        'days': '7',  # Fetch data for the last 7 days
-        'interval': 'daily'
-    }
+    """Fetch last 7 days of BTC/USD daily prices as [[ts, price], ...] with fallbacks.
+
+    Order: CoinCap (with User-Agent) → CoinGecko → CoinPaprika.
+    """
+    # 1) CoinCap daily history
     try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(
+            'https://api.coincap.io/v2/assets/bitcoin/history',
+            params={'interval': 'd1'},
+            headers=headers,
+            timeout=10
+        )
+        r.raise_for_status()
+        data = r.json().get('data', [])
+        if data:
+            # Take last 7 entries and map to [timestamp_ms, price_float]
+            trimmed = data[-7:]
+            prices = [[int(item.get('time', 0)), float(item.get('priceUsd'))] for item in trimmed if item.get('priceUsd')]
+            if prices:
+                return prices
+    except Exception as e:
+        print(f"Historical CoinCap failed: {e}")
+
+    # 2) CoinGecko market_chart
+    try:
+        url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
+        params = {'vs_currency': 'usd', 'days': '7', 'interval': 'daily'}
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
-        return data.get('prices', [])
+        prices = data.get('prices', [])
+        if prices:
+            return prices
     except Exception as e:
-        print(f"Error fetching historical data: {e}")
-        return []
+        print(f"Historical CoinGecko failed: {e}")
+
+    # 3) CoinPaprika OHLC (daily
+    try:
+        from datetime import datetime, timedelta
+        end = datetime.utcnow().date()
+        start = end - timedelta(days=7)
+        r = requests.get(
+            'https://api.coinpaprika.com/v1/coins/btc-bitcoin/ohlcv/historical',
+            params={'start': start.isoformat(), 'end': end.isoformat()},
+            timeout=10
+        )
+        r.raise_for_status()
+        ohlc = r.json()  # list of {time, open, high, low, close}
+        if isinstance(ohlc, list) and ohlc:
+            prices = []
+            for item in ohlc[-7:]:
+                t = item.get('time')
+                # Convert ISO date to timestamp ms
+                try:
+                    ts = int(datetime.fromisoformat(t).timestamp() * 1000) if t else 0
+                except Exception:
+                    ts = 0
+                prices.append([ts, float(item.get('close'))])
+            return prices
+    except Exception as e:
+        print(f"Historical CoinPaprika failed: {e}")
+
+    return []
 
 def calculate_moving_average(prices, days=7):
     if len(prices) < days:
