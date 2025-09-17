@@ -79,6 +79,22 @@ class PendingBuy(db.Model):
 with app.app_context():
     db.create_all()
 
+def fetch_binance_price(symbol: str = 'BTCUSDT') -> float:
+    """Safely fetch the latest price from Binance. Returns 0.0 on failure."""
+    try:
+        response = requests.get(
+            'https://api.binance.com/api/v3/ticker/price',
+            params={'symbol': symbol},
+            timeout=10
+        )
+        response.raise_for_status()
+        data = response.json()
+        price_str = data.get('price')
+        return float(price_str) if price_str is not None else 0.0
+    except Exception as error:
+        print(f"Error fetching Binance price for {symbol}: {error}")
+        return 0.0
+
 def get_binance_signature(data, secret):
     return hmac.new(secret.encode('utf-8'), data.encode('utf-8'), hashlib.sha256).hexdigest()
 
@@ -188,8 +204,7 @@ def check_and_execute_trades():
             print("\n=== Starting Trade Check ===")
             try:
                 users = User.query.all()
-                current_price = float(requests.get('https://api.binance.com/api/v3/ticker/price', 
-                                                 params={'symbol': 'BTCUSDT'}).json()['price'])
+                current_price = fetch_binance_price('BTCUSDT')
                 print(f"Current BTC price: ${current_price:.2f}")
                 
                 for user in users:
@@ -660,10 +675,8 @@ def check_buy_sell_conditions(current_price, buy_threshold, sell_threshold):
     print(f"Buy Threshold: {buy_threshold}, Sell Threshold: {sell_threshold}, Current Price: {current_price}")
 
 def fetch_current_btc_price():
-    # Fetch the current BTC price from your API
-    response = requests.get('https://api.binance.com/api/v3/ticker/price', params={'symbol': 'BTCUSDT'})
-    data = response.json()
-    return float(data['price'])
+    # Fetch the current BTC price from Binance safely
+    return fetch_binance_price('BTCUSDT')
 
 def trading_bot(user_settings):
     while True:
