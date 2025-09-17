@@ -243,21 +243,18 @@ def calculate_trade_profit(buy_price, sell_price, amount):
     return (sell_price - buy_price) * amount
 
 def backfill_price_history(user, days=7):
-    """Backfill settings.price_history using recent trades or current price.
-
-    Returns True if the settings were updated, otherwise False.
-    """
+    """Backfill settings.price_history using recent trades or current price."""
     try:
         history = json.loads(user.settings.price_history or "[]")
     except Exception:
         history = []
 
     if len(history) >= days:
-        return False
+        return False  # already has enough history
 
+    # Use trade history if available
     trades = (
-        TradeHistory.query
-        .filter_by(user_id=user.id)
+        TradeHistory.query.filter_by(user_id=user.id)
         .order_by(TradeHistory.timestamp.desc())
         .limit(days)
         .all()
@@ -265,14 +262,16 @@ def backfill_price_history(user, days=7):
     trade_prices = [t.price for t in trades if t.price]
 
     if trade_prices:
-        trade_prices = trade_prices[::-1]
+        trade_prices = trade_prices[::-1]  # chronological order
         history = (trade_prices + history)[-days:]
     else:
+        # fallback: current price repeated
         current_price = fetch_price_with_fallback()
         if current_price:
             history = [current_price] * days
 
     user.settings.price_history = json.dumps(history)
+    db.session.add(user.settings)  # ensure attached to session
     print(f"✓ Backfilled {len(history)} prices for {user.email}")
     return True
 
@@ -606,28 +605,23 @@ def dashboard():
     # Get recent trades
     recent_trades = trades[:10]  # Last 10 trades
     
-    # Backfill price history if empty for immediate stats
+    # Backfill if missing
     updated = False
     if not user.settings.price_history or user.settings.price_history == "[]":
         updated = backfill_price_history(user, days=7)
         if updated:
-            db.session.commit()
+            db.session.commit()  # commit once, safely in request context
 
-    # Calculate price statistics (safe against API failures)
+    # Historical data
     historical_prices = fetch_historical_data(user)
-    # Local fallback if external failed
-    if not historical_prices:
-        try:
-            stored = json.loads(user.settings.price_history or '[]')
-            if isinstance(stored, list) and stored:
-                last = stored[-7:]
-                historical_prices = [[i, float(v)] for i, v in enumerate(last, start=1) if isinstance(v, (int, float))]
-        except Exception:
-            pass
-
     current_price = fetch_price_with_fallback()
-    moving_average = calculate_moving_average(historical_prices) if historical_prices else 0
-    percentage_change = calculate_percentage_change(current_price, moving_average) if moving_average else 0
+
+    # Stats
+    moving_average = calculate_moving_average(historical_prices)
+    percentage_change = (
+        calculate_percentage_change(current_price, moving_average)
+        if moving_average > 0 else 0
+    )
     average_low = calculate_average_low(historical_prices) if historical_prices else 0
     average_high = calculate_average_high(historical_prices) if historical_prices else 0
     
@@ -718,28 +712,27 @@ def logout():
     session.pop('user_id', None)
     return redirect(url_for('login'))
 
-def fetch_historical_data(user=None):
-    """Fetch last 7 days of BTC/USD daily prices with multiple fallbacks."""
+def fetch_historical_data(user, days=7):
+    """Use local cached prices first; fallback to external APIs if empty."""
 
-    # 1) Yahoo Finance
+    # 1) Local cache from settings
     try:
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD"
-        params = {"interval": "1d", "range": "7d"}
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        timestamps = data["chart"]["result"][0]["timestamp"]
-        closes = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
-        prices = [[ts * 1000, float(c)] for ts, c in zip(timestamps, closes) if c is not None]
-        if prices:
-            return prices
+        if user and user.settings and user.settings.price_history:
+            local_prices = json.loads(user.settings.price_history)
+            if local_prices:
+                now = int(time.time() * 1000)
+                one_day = 86400 * 1000
+                return [
+                    [now - (len(local_prices) - i) * one_day, float(p)]
+                    for i, p in enumerate(local_prices)
+                ]
     except Exception as e:
-        print(f"Historical Yahoo Finance failed: {e}")
+        print(f"Local history fallback failed: {e}")
 
-    # 2) CoinGecko fallback
+    # 2) External API (backup only, may rate limit)
     try:
         url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
-        params = {"vs_currency": "usd", "days": "7", "interval": "daily"}
+        params = {"vs_currency": "usd", "days": str(days), "interval": "daily"}
         r = requests.get(url, params=params, timeout=10)
         r.raise_for_status()
         data = r.json()
@@ -747,19 +740,7 @@ def fetch_historical_data(user=None):
         if prices:
             return prices
     except Exception as e:
-        print(f"Historical CoinGecko failed: {e}")
-
-    # 3) Local settings.price_history fallback
-    try:
-        source_user = user
-        if source_user is None and hasattr(g, "user"):
-            source_user = g.user
-        if source_user and getattr(source_user, 'settings', None) and source_user.settings.price_history:
-            local_prices = json.loads(source_user.settings.price_history)
-            if local_prices:
-                return [[int(time.time() * 1000), float(p)] for p in local_prices[-7:]]
-    except Exception as e:
-        print(f"Local history fallback failed: {e}")
+        print(f"External history fetch failed: {e}")
 
     return []
 
