@@ -242,6 +242,37 @@ def calculate_trade_profit(buy_price, sell_price, amount):
     """Calculate profit/loss for a trade"""
     return (sell_price - buy_price) * amount
 
+def backfill_price_history(user, days=7):
+    """Backfill settings.price_history using recent trades or current price."""
+    try:
+        history = json.loads(user.settings.price_history or "[]")
+    except Exception:
+        history = []
+
+    if len(history) >= days:
+        return
+
+    trades = (
+        TradeHistory.query
+        .filter_by(user_id=user.id)
+        .order_by(TradeHistory.timestamp.desc())
+        .limit(days)
+        .all()
+    )
+    trade_prices = [t.price for t in trades if t.price]
+
+    if trade_prices:
+        trade_prices = trade_prices[::-1]
+        history = (trade_prices + history)[-days:]
+    else:
+        current_price = fetch_price_with_fallback()
+        if current_price:
+            history = [current_price] * days
+
+    user.settings.price_history = json.dumps(history)
+    db.session.commit()
+    print(f"✓ Backfilled {len(history)} prices for {user.email}")
+
 def check_and_execute_trades():
     print("\nStarting continuous trade check loop...")
     while True:  # Make the function run continuously
@@ -572,6 +603,10 @@ def dashboard():
     # Get recent trades
     recent_trades = trades[:10]  # Last 10 trades
     
+    # Backfill price history if empty for immediate stats
+    if not user.settings.price_history or user.settings.price_history == "[]":
+        backfill_price_history(user, days=7)
+
     # Calculate price statistics (safe against API failures)
     historical_prices = fetch_historical_data()
     # Local fallback if external failed
