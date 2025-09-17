@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, g
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
@@ -23,12 +23,8 @@ os.makedirs(db_dir, exist_ok=True)
 db_file = os.path.join(db_dir, 'trading_bot.db')
 
 app = Flask(__name__)
-# Use SECRET_KEY from env in production; fallback to random for local dev
-app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
-
-# Prefer DATABASE_URL if provided (e.g., Render PostgreSQL), else SQLite file
-database_url = os.environ.get('DATABASE_URL')
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url if database_url else f'sqlite:///{db_file}'
+app.secret_key = os.urandom(24)
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_file}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -78,67 +74,6 @@ class PendingBuy(db.Model):
 # Create all database tables
 with app.app_context():
     db.create_all()
-
-def fetch_binance_price(symbol: str = 'BTCUSDT') -> float:
-    """Safely fetch the latest price from Binance. Returns 0.0 on failure."""
-    try:
-        response = requests.get(
-            'https://api.binance.com/api/v3/ticker/price',
-            params={'symbol': symbol},
-            timeout=10
-        )
-        response.raise_for_status()
-        data = response.json()
-        price_str = data.get('price')
-        return float(price_str) if price_str is not None else 0.0
-    except Exception as error:
-        print(f"Error fetching Binance price for {symbol}: {error}")
-        return 0.0
-
-def fetch_price_with_fallback() -> float:
-    """Fetch BTC/USD price. Order: CoinPaprika → CoinCap (UA) → CoinGecko → Binance."""
-    # 1) CoinPaprika
-    try:
-        r = requests.get('https://api.coinpaprika.com/v1/tickers/btc-bitcoin', timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        usd = data.get('quotes', {}).get('USD', {}).get('price')
-        if usd is not None:
-            return float(usd)
-    except Exception as e:
-        print(f"CoinPaprika provider failed: {e}")
-
-    # 2) CoinCap with User-Agent header to avoid sporadic 404s
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get('https://api.coincap.io/v2/assets/bitcoin', headers=headers, timeout=10)
-        r.raise_for_status()
-        usd = r.json().get('data', {}).get('priceUsd')
-        if usd is not None:
-            return float(usd)
-    except Exception as e:
-        print(f"CoinCap provider failed: {e}")
-
-    # 3) CoinGecko
-    try:
-        r = requests.get(
-            'https://api.coingecko.com/api/v3/simple/price',
-            params={'ids': 'bitcoin', 'vs_currencies': 'usd'},
-            timeout=10
-        )
-        r.raise_for_status()
-        usd = r.json().get('bitcoin', {}).get('usd')
-        if usd is not None:
-            return float(usd)
-    except Exception as e:
-        print(f"CoinGecko provider failed: {e}")
-
-    # 4) Binance last (often blocked on serverless)
-    price = fetch_binance_price('BTCUSDT')
-    if price > 0:
-        return price
-
-    return 0.0
 
 def get_binance_signature(data, secret):
     return hmac.new(secret.encode('utf-8'), data.encode('utf-8'), hashlib.sha256).hexdigest()
@@ -242,39 +177,6 @@ def calculate_trade_profit(buy_price, sell_price, amount):
     """Calculate profit/loss for a trade"""
     return (sell_price - buy_price) * amount
 
-def backfill_price_history(user, days=7):
-    """Backfill settings.price_history using recent trades or current price."""
-    try:
-        history = json.loads(user.settings.price_history or "[]")
-    except Exception:
-        history = []
-
-    if len(history) >= days:
-        return False  # already has enough history
-
-    # Use trade history if available
-    trades = (
-        TradeHistory.query.filter_by(user_id=user.id)
-        .order_by(TradeHistory.timestamp.desc())
-        .limit(days)
-        .all()
-    )
-    trade_prices = [t.price for t in trades if t.price]
-
-    if trade_prices:
-        trade_prices = trade_prices[::-1]  # chronological order
-        history = (trade_prices + history)[-days:]
-    else:
-        # fallback: current price repeated
-        current_price = fetch_price_with_fallback()
-        if current_price:
-            history = [current_price] * days
-
-    user.settings.price_history = json.dumps(history)
-    db.session.add(user.settings)  # ensure attached to session
-    print(f"✓ Backfilled {len(history)} prices for {user.email}")
-    return True
-
 def check_and_execute_trades():
     print("\nStarting continuous trade check loop...")
     while True:  # Make the function run continuously
@@ -282,7 +184,8 @@ def check_and_execute_trades():
             print("\n=== Starting Trade Check ===")
             try:
                 users = User.query.all()
-                current_price = fetch_price_with_fallback()
+                current_price = float(requests.get('https://api.binance.com/api/v3/ticker/price', 
+                                                 params={'symbol': 'BTCUSDT'}).json()['price'])
                 print(f"Current BTC price: ${current_price:.2f}")
                 
                 for user in users:
@@ -501,9 +404,9 @@ def check_and_execute_trades():
                 print("Full error traceback:")
                 print(traceback.format_exc())
             
-            # Sleep for 60 seconds before next check to avoid rate limits
-            print("\nWaiting 60 seconds before next check...")
-            time.sleep(60)
+            # Sleep for 5 seconds before next check
+            print("\nWaiting 5 seconds before next check...")
+            time.sleep(5)
 
 def start_trading_bot():
     schedule.every(5).seconds.do(check_and_execute_trades)  # Increased frequency to 5 seconds
@@ -565,15 +468,6 @@ def dashboard():
     if not user:
         session.clear()
         return redirect(url_for('login'))
-    # Ensure settings exist for this user (prevents template errors)
-    if not user.settings:
-        default_settings = Settings(user_id=user.id)
-        db.session.add(default_settings)
-        db.session.commit()
-        # Refresh relationship
-        user = User.query.get(user.id)
-    # Make user available in flask.g for helper fallbacks
-    g.user = user
     
     # Get pending buy count
     pending_count = PendingBuy.query.filter_by(
@@ -605,25 +499,14 @@ def dashboard():
     # Get recent trades
     recent_trades = trades[:10]  # Last 10 trades
     
-    # Backfill if missing
-    updated = False
-    if not user.settings.price_history or user.settings.price_history == "[]":
-        updated = backfill_price_history(user, days=7)
-        if updated:
-            db.session.commit()  # commit once, safely in request context
-
-    # Historical data
-    historical_prices = fetch_historical_data(user)
-    current_price = fetch_price_with_fallback()
-
-    # Stats
+    # Calculate price statistics
+    historical_prices = fetch_historical_data()
+    current_price = float(requests.get('https://api.binance.com/api/v3/ticker/price', 
+                                     params={'symbol': 'BTCUSDT'}).json()['price'])
     moving_average = calculate_moving_average(historical_prices)
-    percentage_change = (
-        calculate_percentage_change(current_price, moving_average)
-        if moving_average > 0 else 0
-    )
-    average_low = calculate_average_low(historical_prices) if historical_prices else 0
-    average_high = calculate_average_high(historical_prices) if historical_prices else 0
+    percentage_change = calculate_percentage_change(current_price, moving_average) if moving_average else 0
+    average_low = calculate_average_low(historical_prices)
+    average_high = calculate_average_high(historical_prices)
     
     return render_template('dashboard.html',
                          user=user,
@@ -701,60 +584,37 @@ def get_balances():
 
 @app.route('/get_btc_price')
 def get_btc_price():
-    price = fetch_price_with_fallback()
-    if price and price > 0:
-        return jsonify({'price': float(price)})
-    # Still return 200 with a sentinel; client can show "N/A"
-    return jsonify({'price': 0.0, 'warning': 'All providers unavailable'}), 200
+    try:
+        response = requests.get('https://api.binance.com/api/v3/ticker/price', params={'symbol': 'BTCUSDT'})
+        data = response.json()
+        return jsonify({'price': float(data['price'])})
+    except:
+        return jsonify({'error': 'Unable to fetch price'}), 500
 
 @app.route('/logout')
 def logout():
     session.pop('user_id', None)
     return redirect(url_for('login'))
 
-def fetch_historical_data(user, days=7):
-    """Use local cached prices first; fallback to external APIs if empty."""
-
-    # 1) Local cache from settings
-    try:
-        if user and user.settings and user.settings.price_history:
-            local_prices = json.loads(user.settings.price_history)
-            if local_prices:
-                now = int(time.time() * 1000)
-                one_day = 86400 * 1000
-                return [
-                    [now - (len(local_prices) - i) * one_day, float(p)]
-                    for i, p in enumerate(local_prices)
-                ]
-    except Exception as e:
-        print(f"Local history fallback failed: {e}")
-
-    # 2) External API (backup only, may rate limit)
-    try:
-        url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
-        params = {"vs_currency": "usd", "days": str(days), "interval": "daily"}
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        prices = data.get("prices", [])
-        if prices:
-            return prices
-    except Exception as e:
-        print(f"External history fetch failed: {e}")
-
-    return []
+def fetch_historical_data():
+    url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
+    params = {
+        'vs_currency': 'usd',
+        'days': '7',  # Fetch data for the last 7 days
+        'interval': 'daily'
+    }
+    response = requests.get(url, params=params)
+    data = response.json()
+    return data['prices']  # Returns a list of prices
 
 def calculate_moving_average(prices, days=7):
-    """Return latest moving average using up to the last `days` points.
-
-    Accepts [[ts, price], ...]. If fewer than `days` points are available, it
-    averages whatever is available. Returns 0 if the list is empty.
-    """
-    if not prices:
-        return 0
-    window = min(len(prices), days)
-    tail = prices[-window:]
-    return sum(p[1] for p in tail) / window
+    if len(prices) < days:
+        return None  # Not enough data
+    moving_averages = []
+    for i in range(len(prices) - days + 1):
+        avg = sum(price[1] for price in prices[i:i + days]) / days
+        moving_averages.append(avg)
+    return moving_averages[-1]  # Return the latest moving average
 
 def calculate_percentage_change(current_price, moving_average):
     if moving_average is None:
@@ -780,8 +640,10 @@ def check_buy_sell_conditions(current_price, buy_threshold, sell_threshold):
     print(f"Buy Threshold: {buy_threshold}, Sell Threshold: {sell_threshold}, Current Price: {current_price}")
 
 def fetch_current_btc_price():
-    # Fetch the current BTC price with fallbacks
-    return fetch_price_with_fallback()
+    # Fetch the current BTC price from your API
+    response = requests.get('https://api.binance.com/api/v3/ticker/price', params={'symbol': 'BTCUSDT'})
+    data = response.json()
+    return float(data['price'])
 
 def trading_bot(user_settings):
     while True:
@@ -1003,6 +865,4 @@ if __name__ == '__main__':
     print("Trading bot started in background thread")
     
     # Run the Flask application
-    port = int(os.environ.get('PORT', 5000))
-    is_production = os.environ.get('FLASK_ENV') == 'production'
-    app.run(host='0.0.0.0', port=port, debug=not is_production)
+    app.run(debug=True) 
