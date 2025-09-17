@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, g
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
@@ -539,6 +539,8 @@ def dashboard():
         db.session.commit()
         # Refresh relationship
         user = User.query.get(user.id)
+    # Make user available in flask.g for helper fallbacks
+    g.user = user
     
     # Get pending buy count
     pending_count = PendingBuy.query.filter_by(
@@ -676,68 +678,40 @@ def logout():
     return redirect(url_for('login'))
 
 def fetch_historical_data():
-    """Fetch last 7 days of BTC/USD daily prices as [[ts, price], ...] with fallbacks.
-
-    Order: CoinCap (with User-Agent) → CoinGecko → CoinPaprika.
-    """
-    # 1) CoinCap daily history
+    """Fetch last 7 days of BTC/USD daily prices with multiple fallbacks."""
+    # 1) Binance daily candles
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get(
-            'https://api.coincap.io/v2/assets/bitcoin/history',
-            params={'interval': 'd1'},
-            headers=headers,
-            timeout=10
-        )
+        url = "https://api.binance.com/api/v3/klines"
+        params = {"symbol": "BTCUSDT", "interval": "1d", "limit": 7}
+        r = requests.get(url, params=params, timeout=10)
         r.raise_for_status()
-        data = r.json().get('data', [])
+        data = r.json()
         if data:
-            # Take last 7 entries and map to [timestamp_ms, price_float]
-            trimmed = data[-7:]
-            prices = [[int(item.get('time', 0)), float(item.get('priceUsd'))] for item in trimmed if item.get('priceUsd')]
-            if prices:
-                return prices
+            return [[int(item[0]), float(item[4])] for item in data]
     except Exception as e:
-        print(f"Historical CoinCap failed: {e}")
+        print(f"Historical Binance failed: {e}")
 
-    # 2) CoinGecko market_chart
+    # 2) CoinGecko fallback (may rate-limit)
     try:
         url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
-        params = {'vs_currency': 'usd', 'days': '7', 'interval': 'daily'}
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        prices = data.get('prices', [])
+        params = {"vs_currency": "usd", "days": "7", "interval": "daily"}
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        prices = data.get("prices", [])
         if prices:
             return prices
     except Exception as e:
         print(f"Historical CoinGecko failed: {e}")
 
-    # 3) CoinPaprika OHLC (daily
+    # 3) Local settings.price_history fallback
     try:
-        from datetime import datetime, timedelta
-        end = datetime.utcnow().date()
-        start = end - timedelta(days=7)
-        r = requests.get(
-            'https://api.coinpaprika.com/v1/coins/btc-bitcoin/ohlcv/historical',
-            params={'start': start.isoformat(), 'end': end.isoformat()},
-            timeout=10
-        )
-        r.raise_for_status()
-        ohlc = r.json()  # list of {time, open, high, low, close}
-        if isinstance(ohlc, list) and ohlc:
-            prices = []
-            for item in ohlc[-7:]:
-                t = item.get('time')
-                # Convert ISO date to timestamp ms
-                try:
-                    ts = int(datetime.fromisoformat(t).timestamp() * 1000) if t else 0
-                except Exception:
-                    ts = 0
-                prices.append([ts, float(item.get('close'))])
-            return prices
+        if hasattr(g, "user") and g.user and g.user.settings and g.user.settings.price_history:
+            local_prices = json.loads(g.user.settings.price_history)
+            if local_prices:
+                return [[int(time.time() * 1000), float(p)] for p in local_prices[-7:]]
     except Exception as e:
-        print(f"Historical CoinPaprika failed: {e}")
+        print(f"Local history fallback failed: {e}")
 
     return []
 
