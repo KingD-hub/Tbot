@@ -96,31 +96,48 @@ def fetch_binance_price(symbol: str = 'BTCUSDT') -> float:
         return 0.0
 
 def fetch_price_with_fallback() -> float:
-    """Try multiple public APIs to get BTC/USD price. Returns 0.0 if all fail."""
-    # 1) Binance
+    """Fetch BTC/USD price. Order: CoinPaprika → CoinCap (UA) → CoinGecko → Binance."""
+    # 1) CoinPaprika
+    try:
+        r = requests.get('https://api.coinpaprika.com/v1/tickers/btc-bitcoin', timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        usd = data.get('quotes', {}).get('USD', {}).get('price')
+        if usd is not None:
+            return float(usd)
+    except Exception as e:
+        print(f"CoinPaprika provider failed: {e}")
+
+    # 2) CoinCap with User-Agent header to avoid sporadic 404s
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get('https://api.coincap.io/v2/assets/bitcoin', headers=headers, timeout=10)
+        r.raise_for_status()
+        usd = r.json().get('data', {}).get('priceUsd')
+        if usd is not None:
+            return float(usd)
+    except Exception as e:
+        print(f"CoinCap provider failed: {e}")
+
+    # 3) CoinGecko
+    try:
+        r = requests.get(
+            'https://api.coingecko.com/api/v3/simple/price',
+            params={'ids': 'bitcoin', 'vs_currencies': 'usd'},
+            timeout=10
+        )
+        r.raise_for_status()
+        usd = r.json().get('bitcoin', {}).get('usd')
+        if usd is not None:
+            return float(usd)
+    except Exception as e:
+        print(f"CoinGecko provider failed: {e}")
+
+    # 4) Binance last (often blocked on serverless)
     price = fetch_binance_price('BTCUSDT')
-    if price and price > 0:
+    if price > 0:
         return price
-    # 2) CoinCap
-    try:
-        r = requests.get('https://api.coincap.io/v2/assets/bitcoin', timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        usd = data.get('data', {}).get('priceUsd')
-        if usd is not None:
-            return float(usd)
-    except Exception as e:
-        print(f"CoinCap fallback failed: {e}")
-    # 3) CoinGecko simple price
-    try:
-        r = requests.get('https://api.coingecko.com/api/v3/simple/price', params={'ids': 'bitcoin', 'vs_currencies': 'usd'}, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        usd = data.get('bitcoin', {}).get('usd')
-        if usd is not None:
-            return float(usd)
-    except Exception as e:
-        print(f"CoinGecko fallback failed: {e}")
+
     return 0.0
 
 def get_binance_signature(data, secret):
@@ -451,9 +468,9 @@ def check_and_execute_trades():
                 print("Full error traceback:")
                 print(traceback.format_exc())
             
-            # Sleep for 5 seconds before next check
-            print("\nWaiting 5 seconds before next check...")
-            time.sleep(5)
+            # Sleep for 60 seconds before next check to avoid rate limits
+            print("\nWaiting 60 seconds before next check...")
+            time.sleep(60)
 
 def start_trading_bot():
     schedule.every(5).seconds.do(check_and_execute_trades)  # Increased frequency to 5 seconds
