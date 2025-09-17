@@ -23,8 +23,12 @@ os.makedirs(db_dir, exist_ok=True)
 db_file = os.path.join(db_dir, 'trading_bot.db')
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_file}'
+# Use SECRET_KEY from env in production; fallback to random for local dev
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+
+# Prefer DATABASE_URL if provided (e.g., Render PostgreSQL), else SQLite file
+database_url = os.environ.get('DATABASE_URL')
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url if database_url else f'sqlite:///{db_file}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -865,4 +869,6 @@ if __name__ == '__main__':
     print("Trading bot started in background thread")
     
     # Run the Flask application
-    app.run(debug=True) 
+    port = int(os.environ.get('PORT', 5000))
+    is_production = os.environ.get('FLASK_ENV') == 'production'
+    app.run(host='0.0.0.0', port=port, debug=not is_production)
